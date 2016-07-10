@@ -20,12 +20,6 @@ use mime::Mime;
 use mime::TopLevel::Text;
 use mime::SubLevel::Html;
 
-#[derive(Debug)]
-struct Handler {
-    url: Url,
-    sender: mpsc::Sender<ResponseResult>,
-    result: Option<ResponseResult>
-}
 
 #[derive(Debug, Clone)]
 struct ResponseResult {
@@ -45,21 +39,27 @@ fn is_html(headers: &Headers) -> bool {
     }
 }
 
+#[derive(Debug)]
+struct Handler {
+    url: Url,
+    sender: mpsc::Sender<ResponseResult>,
+    result: Option<ResponseResult>
+}
+
 impl Handler {
-    fn return_response(&self) -> Next {
-        self.sender.send(self.result.clone().unwrap()).unwrap();
-        Next::end()
+    fn make_request(url: Url, client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
+        let handler = Handler { url: url.clone(), sender: tx, result: None };
+        client.request(url, handler).unwrap();
     }
 
     fn read(&self) -> Next {
         Next::read().timeout(Duration::from_secs(10))
     }
 
-    fn make_request(url: Url, client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
-        let handler = Handler { url: url.clone(), sender: tx, result: None };
-        client.request(url, handler).unwrap();
+    fn return_response(&self) -> Next {
+        self.sender.send(self.result.clone().unwrap()).unwrap();
+        Next::end()
     }
-
 }
 
 impl hyper::client::Handler<HttpStream> for Handler {
@@ -103,7 +103,8 @@ impl hyper::client::Handler<HttpStream> for Handler {
                 result.body = Some(Vec::new());
             }
             if let Some(ref mut body) = result.body {
-                 read_result = Some(io::copy(decoder, body));
+                // TODO - check that this really appends data, not overrides
+                read_result = Some(io::copy(decoder, body));
             }
         }
         if let Some(read_result) = read_result {
@@ -129,6 +130,24 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 }
 
+fn handle_redirect(response: &ResponseResult,
+                   client: &Client<Handler>, tx: &mpsc::Sender<ResponseResult>) {
+    println!("Handling redirect");
+    match response.headers.get::<Location>() {
+        Some(&Location(ref location)) => {
+            if let Ok(url) = location.parse() {
+                // TODO - limit redirects
+                Handler::make_request(url, &client, tx.clone());
+            } else {
+                println!("Can not parse location url");
+            }
+        },
+        _ => {
+            println!("Can not handle redirect!");
+        }
+    }
+}
+
 fn crawl(client: &Client<Handler>,
          tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
     loop {
@@ -144,20 +163,7 @@ fn crawl(client: &Client<Handler>,
             },
             StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
             StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
-                println!("Handling redirect");
-                match response.headers.get::<Location>() {
-                    Some(&Location(ref location)) => {
-                        if let Ok(url) = location.parse() {
-                            // TODO - limit redirects
-                            Handler::make_request(url, &client, tx.clone());
-                        } else {
-                            println!("Can not parse location url");
-                        }
-                    },
-                    _ => {
-                        println!("Can not handle redirect!");
-                    }
-                }
+                handle_redirect(&response, client, &tx);
             },
             _ => {
                 println!("Got unexpected status {:?}", response.status);
@@ -194,5 +200,5 @@ fn main() {
     }
 
     crawl(&client, tx, rx);
-    // client.close();
+    client.close();
 }
