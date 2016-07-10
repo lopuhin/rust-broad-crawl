@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use hyper::client::{Client, Request, Response, DefaultTransport as HttpStream};
-use hyper::header::{Connection, ContentType};
+use hyper::header::{Connection, ContentType, Location};
 use hyper::{Url, Decoder, Encoder, Next};
 use hyper::status::StatusCode;
 use hyper::header::Headers;
@@ -22,12 +22,14 @@ use mime::SubLevel::Html;
 
 #[derive(Debug)]
 struct Handler {
+    url: Url,
     sender: mpsc::Sender<ResponseResult>,
     result: Option<ResponseResult>
 }
 
 #[derive(Debug, Clone)]
 struct ResponseResult {
+    url: Url,
     status: StatusCode,
     headers: Headers,
     body: Option<Vec<u8>>
@@ -54,7 +56,7 @@ impl Handler {
     }
 
     fn make_request(url: Url, client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
-        let handler = Handler { sender: tx, result: None };
+        let handler = Handler { url: url.clone(), sender: tx, result: None };
         client.request(url, handler).unwrap();
     }
 
@@ -63,6 +65,7 @@ impl Handler {
 impl hyper::client::Handler<HttpStream> for Handler {
     fn on_request(&mut self, req: &mut Request) -> Next {
         req.headers_mut().set(Connection::close());
+        // TODO - set user-agent
         self.read()
     }
 
@@ -71,11 +74,12 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_response(&mut self, response: Response) -> Next {
-        println!("Response: {}", response.status());
-        println!("Headers:\n{}", response.headers());
+        // println!("Response: {}", response.status());
+        // println!("Headers:\n{}", response.headers());
         let status = response.status();
         let headers = response.headers();
         self.result = Some(ResponseResult {
+            url: self.url.clone(),
             status: status.clone(),
             headers: headers.clone(),
             body: None
@@ -109,7 +113,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
                 Err(e) => match e.kind() {
                     io::ErrorKind::WouldBlock => Next::read(),
                     _ => {
-                        println!("ERROR: {}", e);
+                        println!("Response read error: {}", e);
                         self.return_response()
                     }
                 }
@@ -120,8 +124,45 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
-        println!("ERROR: {}", err);
+        println!("Some http error: {}", err);
         Next::remove()
+    }
+}
+
+fn crawl(client: &Client<Handler>,
+         tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
+    loop {
+        let response = rx.recv().unwrap();
+        println!("\nReceived {:?} from {} {:?}, body: {}",
+                 response.status, response.url, response.headers, response.body.is_some());
+        // TODO - redirects, extract links
+        match response.status {
+            StatusCode::Ok => {
+                if let Some(_body) = response.body {
+                    println!("Got body, now decode and save it!");
+                }
+            },
+            StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
+            StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
+                println!("Handling redirect");
+                match response.headers.get::<Location>() {
+                    Some(&Location(ref location)) => {
+                        if let Ok(url) = location.parse() {
+                            // TODO - limit redirects
+                            Handler::make_request(url, &client, tx.clone());
+                        } else {
+                            println!("Can not parse location url");
+                        }
+                    },
+                    _ => {
+                        println!("Can not handle redirect!");
+                    }
+                }
+            },
+            _ => {
+                println!("Got unexpected status {:?}", response.status);
+            }
+        }
     }
 }
 
@@ -152,11 +193,6 @@ fn main() {
         }
     }
 
-    loop {
-        let response_result = rx.recv().unwrap();
-        println!("Received {:?} {:?}, body: {}", response_result.status, response_result.headers,
-                 response_result.body.is_some());
-        // TODO - redirects, extract links
-    }
+    crawl(&client, tx, rx);
     // client.close();
 }
