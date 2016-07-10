@@ -4,7 +4,9 @@ extern crate hyper;
 extern crate env_logger;
 
 use std::env;
-use std::io;
+//use std::io;
+use std::io::{BufRead, BufReader};
+use std::fs::File;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -41,7 +43,9 @@ impl hyper::client::Handler<HttpStream> for Dump {
         read()
     }
 
-    fn on_response_readable(&mut self, decoder: &mut Decoder<HttpStream>) -> Next {
+    fn on_response_readable(&mut self, _decoder: &mut Decoder<HttpStream>) -> Next {
+        Next::end()
+        /*
         match io::copy(decoder, &mut io::stdout()) {
             Ok(0) => Next::end(),
             Ok(_) => read(),
@@ -52,7 +56,7 @@ impl hyper::client::Handler<HttpStream> for Dump {
                     Next::end()
                 }
             }
-        }
+        }*/
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
@@ -64,17 +68,30 @@ impl hyper::client::Handler<HttpStream> for Dump {
 fn main() {
     env_logger::init().unwrap();
 
-    let url = match env::args().nth(1) {
-        Some(url) => url,
+    let filename = match env::args().nth(1) {
+        Some(filename) => filename,
         None => {
-            println!("Usage: client <url>");
+            println!("Usage: client <urls file>");
             return;
         }
     };
 
     let (tx, rx) = mpsc::channel();
     let client = Client::new().expect("Failed to create a Client");
-    client.request(url.parse().unwrap(), Dump(tx)).unwrap();
+    let urls_file = BufReader::new(File::open(filename).unwrap());
+    for line in urls_file.lines() {
+        let line = line.unwrap();
+        let url = format!("http://{}", line.trim());
+        match url.parse() {
+            Ok(url) => {
+                // FIXME - a single dump
+                client.request(url, Dump(tx.clone())).unwrap();
+            },
+            Err(e) => {
+                println!("Error parsing url '{}': {}", url, e);
+            }
+        }
+    }
 
     // wait till done
     let _  = rx.recv();
