@@ -44,7 +44,7 @@ fn is_html(headers: &Headers) -> bool {
 }
 
 impl Handler {
-    fn finish(&self) -> Next {
+    fn return_response(&self) -> Next {
         self.sender.send(self.result.clone().unwrap()).unwrap();
         Next::end()
     }
@@ -85,10 +85,10 @@ impl hyper::client::Handler<HttpStream> for Handler {
                 if is_html(headers) {
                     self.read()
                 } else {
-                    self.finish()
+                    self.return_response()
                 }
             },
-            _ => self.finish()
+            _ => self.return_response()
         }
     }
 
@@ -104,13 +104,13 @@ impl hyper::client::Handler<HttpStream> for Handler {
         }
         if let Some(read_result) = read_result {
             match read_result {
-                Ok(0) => self.finish(),
+                Ok(0) => self.return_response(),
                 Ok(_) => self.read(),
                 Err(e) => match e.kind() {
                     io::ErrorKind::WouldBlock => Next::read(),
                     _ => {
                         println!("ERROR: {}", e);
-                        self.finish()
+                        self.return_response()
                     }
                 }
             }
