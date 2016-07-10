@@ -1,6 +1,6 @@
 #![deny(warnings)]
 extern crate hyper;
-
+extern crate mime;
 extern crate env_logger;
 
 use std::env;
@@ -12,10 +12,13 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use hyper::client::{Client, Request, Response, DefaultTransport as HttpStream};
-use hyper::header::Connection;
+use hyper::header::{Connection, ContentType};
 use hyper::{Url, Decoder, Encoder, Next};
 use hyper::status::StatusCode;
 use hyper::header::Headers;
+use mime::Mime;
+use mime::TopLevel::Text;
+use mime::SubLevel::Html;
 
 #[derive(Debug)]
 struct Handler {
@@ -28,6 +31,16 @@ struct ResponseResult {
     status: StatusCode,
     headers: Headers,
     body: Option<Vec<u8>>
+}
+
+fn is_html(headers: &Headers) -> bool {
+    match headers.get::<ContentType>() {
+        Some(content_type) => match content_type {
+            &ContentType(Mime(Text, Html, _)) => true,
+            _ => false
+        },
+        None => false
+    }
 }
 
 impl Handler {
@@ -44,6 +57,7 @@ impl Handler {
         let handler = Handler { sender: tx, result: None };
         client.request(url, handler).unwrap();
     }
+
 }
 
 impl hyper::client::Handler<HttpStream> for Handler {
@@ -59,14 +73,21 @@ impl hyper::client::Handler<HttpStream> for Handler {
     fn on_response(&mut self, response: Response) -> Next {
         println!("Response: {}", response.status());
         println!("Headers:\n{}", response.headers());
-        let status = response.status().clone();
+        let status = response.status();
+        let headers = response.headers();
         self.result = Some(ResponseResult {
-            status: status,
-            headers: response.headers().clone(),
+            status: status.clone(),
+            headers: headers.clone(),
             body: None
         });
         match status {
-            StatusCode::Ok => self.read(),
+            &StatusCode::Ok => {
+                if is_html(headers) {
+                    self.read()
+                } else {
+                    self.finish()
+                }
+            },
             _ => self.finish()
         }
     }
@@ -133,7 +154,8 @@ fn main() {
 
     loop {
         let response_result = rx.recv().unwrap();
-        println!("Received {:?}", response_result);
+        println!("Received {:?} {:?}, body: {}", response_result.status, response_result.headers,
+                 response_result.body.is_some());
         // TODO - redirects, extract links
     }
     // client.close();

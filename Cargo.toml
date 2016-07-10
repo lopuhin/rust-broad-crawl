@@ -5,4 +5,5 @@ authors = ["Konstantin Lopuhin <kostia.lopuhin@gmail.com>"]
 
 [dependencies]
 hyper = {git = "https://github.com/hyperium/hyper.git", rev = "220d09f"}
+mime = "*"
 env_logger = "*"
