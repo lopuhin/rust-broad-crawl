@@ -1,0 +1,8 @@
+[package]
+name = "rust-broad-crawl"
+version = "0.1.0"
+authors = ["Konstantin Lopuhin <kostia.lopuhin@gmail.com>"]
+
+[dependencies]
+hyper = "*"
+env_logger = "*"
