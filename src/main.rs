@@ -4,54 +4,85 @@ extern crate hyper;
 extern crate env_logger;
 
 use std::env;
-//use std::io;
+use std::io;
 use std::io::{BufRead, BufReader};
 use std::fs::File;
+use std::clone::Clone;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use hyper::client::{Client, Request, Response, DefaultTransport as HttpStream};
 use hyper::header::Connection;
 use hyper::{Decoder, Encoder, Next};
+use hyper::status::StatusCode;
+use hyper::header::Headers;
 
 #[derive(Debug)]
-struct Handler{sender: mpsc::Sender<()>}
+struct Handler {
+    sender: mpsc::Sender<ResponseResult>,
+    result: Option<ResponseResult>
+}
 
-fn read() -> Next {
-    Next::read().timeout(Duration::from_secs(10))
+#[derive(Debug, Clone)]
+struct ResponseResult {
+    status: StatusCode,
+    headers: Headers,
+    body: Option<Vec<u8>>
+}
+
+impl Handler {
+    fn finish(&self) -> Next {
+        self.sender.send(self.result.clone().unwrap()).unwrap();
+        Next::end()
+    }
+    fn read(&self) -> Next {
+        Next::read().timeout(Duration::from_secs(10))
+    }
+
 }
 
 impl hyper::client::Handler<HttpStream> for Handler {
     fn on_request(&mut self, req: &mut Request) -> Next {
         req.headers_mut().set(Connection::close());
-        read()
+        self.read()
     }
 
     fn on_request_writable(&mut self, _encoder: &mut Encoder<HttpStream>) -> Next {
-        read()
+        self.read()
     }
 
-    fn on_response(&mut self, res: Response) -> Next {
-        println!("Response: {}", res.status());
-        println!("Headers:\n{}", res.headers());
-        read()
+    fn on_response(&mut self, response: Response) -> Next {
+        println!("Response: {}", response.status());
+        println!("Headers:\n{}", response.headers());
+        let status = response.status().clone();
+        self.result = Some(ResponseResult {
+            status: status,
+            headers: response.headers().clone(),
+            body: None
+        });
+        match status {
+            StatusCode::Ok => self.read(),
+            _ => self.finish()
+        }
     }
 
-    fn on_response_readable(&mut self, _decoder: &mut Decoder<HttpStream>) -> Next {
-        self.sender.send(()).unwrap();
-        Next::end()
-        /*
+    fn on_response_readable(&mut self, decoder: &mut Decoder<HttpStream>) -> Next {
+        if let Some(ref mut result) = self.result {
+            if result.body.is_none() {
+                result.body = Some(Vec::new());
+            }
+        }
         match io::copy(decoder, &mut io::stdout()) {
-            Ok(0) => Next::end(),
-            Ok(_) => read(),
+            Ok(0) => self.finish(),
+            Ok(_) => self.read(),
             Err(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => Next::read(),
                 _ => {
                     println!("ERROR: {}", e);
-                    Next::end()
+                    self.finish()
                 }
             }
-        }*/
+        }
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
@@ -79,7 +110,8 @@ fn main() {
         let url = format!("http://{}", line.trim());
         match url.parse() {
             Ok(url) => {
-                client.request(url, Handler{sender: tx.clone()}).unwrap();
+                let handler = Handler{sender: tx.clone(), result: None};
+                client.request(url, handler).unwrap();
             },
             Err(e) => {
                 println!("Error parsing url '{}': {}", url, e);
