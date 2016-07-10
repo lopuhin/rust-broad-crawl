@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["Konstantin Lopuhin <kostia.lopuhin@gmail.com>"]
 
 [dependencies]
-hyper = "*"
+hyper = {git = "https://github.com/hyperium/hyper.git", rev = "220d09f"}
 env_logger = "*"
