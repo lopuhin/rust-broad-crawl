@@ -15,19 +15,13 @@ use hyper::header::Connection;
 use hyper::{Decoder, Encoder, Next};
 
 #[derive(Debug)]
-struct Dump(mpsc::Sender<()>);
-
-impl Drop for Dump {
-    fn drop(&mut self) {
-        let _ = self.0.send(());
-    }
-}
+struct Handler{sender: mpsc::Sender<()>}
 
 fn read() -> Next {
     Next::read().timeout(Duration::from_secs(10))
 }
 
-impl hyper::client::Handler<HttpStream> for Dump {
+impl hyper::client::Handler<HttpStream> for Handler {
     fn on_request(&mut self, req: &mut Request) -> Next {
         req.headers_mut().set(Connection::close());
         read()
@@ -44,6 +38,7 @@ impl hyper::client::Handler<HttpStream> for Dump {
     }
 
     fn on_response_readable(&mut self, _decoder: &mut Decoder<HttpStream>) -> Next {
+        self.sender.send(()).unwrap();
         Next::end()
         /*
         match io::copy(decoder, &mut io::stdout()) {
@@ -84,8 +79,7 @@ fn main() {
         let url = format!("http://{}", line.trim());
         match url.parse() {
             Ok(url) => {
-                // FIXME - a single dump
-                client.request(url, Dump(tx.clone())).unwrap();
+                client.request(url, Handler{sender: tx.clone()}).unwrap();
             },
             Err(e) => {
                 println!("Error parsing url '{}': {}", url, e);
@@ -94,6 +88,9 @@ fn main() {
     }
 
     // wait till done
-    let _  = rx.recv();
-    client.close();
+    loop {
+        let x = rx.recv().unwrap();
+        println!("Received {:?}", x);
+    }
+    // client.close();
 }
