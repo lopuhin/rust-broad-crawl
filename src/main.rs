@@ -67,21 +67,29 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_response_readable(&mut self, decoder: &mut Decoder<HttpStream>) -> Next {
+        let mut read_result = None;
         if let Some(ref mut result) = self.result {
             if result.body.is_none() {
                 result.body = Some(Vec::new());
             }
+            if let Some(ref mut body) = result.body {
+                 read_result = Some(io::copy(decoder, body));
+            }
         }
-        match io::copy(decoder, &mut io::stdout()) {
-            Ok(0) => self.finish(),
-            Ok(_) => self.read(),
-            Err(e) => match e.kind() {
-                io::ErrorKind::WouldBlock => Next::read(),
-                _ => {
-                    println!("ERROR: {}", e);
-                    self.finish()
+        if let Some(read_result) = read_result {
+            match read_result {
+                Ok(0) => self.finish(),
+                Ok(_) => self.read(),
+                Err(e) => match e.kind() {
+                    io::ErrorKind::WouldBlock => Next::read(),
+                    _ => {
+                        println!("ERROR: {}", e);
+                        self.finish()
+                    }
                 }
             }
+        } else {
+            panic!();
         }
     }
 
