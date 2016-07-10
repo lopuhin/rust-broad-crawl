@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use hyper::client::{Client, Request, Response, DefaultTransport as HttpStream};
 use hyper::header::Connection;
-use hyper::{Decoder, Encoder, Next};
+use hyper::{Url, Decoder, Encoder, Next};
 use hyper::status::StatusCode;
 use hyper::header::Headers;
 
@@ -35,10 +35,15 @@ impl Handler {
         self.sender.send(self.result.clone().unwrap()).unwrap();
         Next::end()
     }
+
     fn read(&self) -> Next {
         Next::read().timeout(Duration::from_secs(10))
     }
 
+    fn make_request(url: Url, client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
+        let handler = Handler { sender: tx, result: None };
+        client.request(url, handler).unwrap();
+    }
 }
 
 impl hyper::client::Handler<HttpStream> for Handler {
@@ -118,8 +123,7 @@ fn main() {
         let url = format!("http://{}", line.trim());
         match url.parse() {
             Ok(url) => {
-                let handler = Handler{sender: tx.clone(), result: None};
-                client.request(url, handler).unwrap();
+                Handler::make_request(url, &client, tx.clone());
             },
             Err(e) => {
                 println!("Error parsing url '{}': {}", url, e);
@@ -127,10 +131,10 @@ fn main() {
         }
     }
 
-    // wait till done
     loop {
-        let x = rx.recv().unwrap();
-        println!("Received {:?}", x);
+        let response_result = rx.recv().unwrap();
+        println!("Received {:?}", response_result);
+        // TODO - redirects, extract links
     }
     // client.close();
 }
