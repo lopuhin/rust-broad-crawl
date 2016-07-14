@@ -3,7 +3,7 @@ name = "rust-broad-crawl"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "hyper 0.9.4 (git+https://github.com/hyperium/hyper.git?rev=220d09f)",
+ "hyper 0.9.4 (git+https://github.com/hyperium/hyper.git?rev=6d54a4d)",
  "mime 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -77,7 +77,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "hyper"
 version = "0.9.4"
-source = "git+https://github.com/hyperium/hyper.git?rev=220d09f#220d09fc3a68cdd9a10589b2b454b54312518bb3"
+source = "git+https://github.com/hyperium/hyper.git?rev=6d54a4d#6d54a4dfdcc0408e7c494ae59edac45343ce0f74"
 dependencies = [
  "cookie 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "httparse 1.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
