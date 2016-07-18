@@ -154,7 +154,7 @@ fn crawl(client: &Client<Handler>,
         let response = rx.recv().unwrap();
         println!("\nReceived {:?} from {} {:?}, body: {}",
                  response.status, response.url, response.headers, response.body.is_some());
-        // TODO - redirects, extract links
+        // TODO - extract links, save body
         match response.status {
             StatusCode::Ok => {
                 if let Some(_body) = response.body {
