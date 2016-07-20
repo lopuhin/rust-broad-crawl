@@ -46,6 +46,17 @@ impl Default for CrawlerConfig {
 }
 
 #[derive(Debug, Clone)]
+struct Request {
+    url: Url
+}
+
+impl Request {
+    fn new(url: Url) -> Self {
+        Request { url: url }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Response {
     status: StatusCode,
     headers: Headers,
@@ -62,21 +73,23 @@ fn is_html(headers: &Headers) -> bool {
     }
 }
 
-type ResultSender = mpsc::Sender<(Url, Option<Response>)>;
-type ResultReceiver = mpsc::Receiver<(Url, Option<Response>)>;
+type ResultSender = mpsc::Sender<(Request, Option<Response>)>;
+type ResultReceiver = mpsc::Receiver<(Request, Option<Response>)>;
 
 #[derive(Debug)]
 struct Handler {
-    url: Url,
     timeout: u64,
     sender: ResultSender,
-    result: Option<Response>
+    request: Request,
+    response: Option<Response>
 }
 
 impl Handler {
-    fn make_request(url: Url, timeout: u64, client: &Client<Handler>, tx: ResultSender) {
+    fn make_request(request: Request,
+                    timeout: u64, client: &Client<Handler>, tx: ResultSender) {
+        let url = request.url.clone();
         let handler = Handler {
-            url: url.clone(), timeout: timeout, sender: tx, result: None };
+            request: request, timeout: timeout, sender: tx, response: None };
         client.request(url, handler).unwrap();
     }
 
@@ -90,7 +103,7 @@ impl Handler {
     }
 
     fn send_result(&self) {
-        self.sender.send((self.url.clone(), self.result.clone())).unwrap();
+        self.sender.send((self.request.clone(), self.response.clone())).unwrap();
     }
 }
 
@@ -110,7 +123,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
         // println!("Headers:\n{}", response.headers());
         let status = response.status();
         let headers = response.headers();
-        self.result = Some(Response {
+        self.response = Some(Response {
             status: status.clone(),
             headers: headers.clone(),
             body: None
@@ -129,11 +142,11 @@ impl hyper::client::Handler<HttpStream> for Handler {
 
     fn on_response_readable(&mut self, decoder: &mut Decoder<HttpStream>) -> Next {
         let mut read_result = None;
-        if let Some(ref mut result) = self.result {
-            if result.body.is_none() {
-                result.body = Some(Vec::new());
+        if let Some(ref mut response) = self.response {
+            if response.body.is_none() {
+                response.body = Some(Vec::new());
             }
-            if let Some(ref mut body) = result.body {
+            if let Some(ref mut body) = response.body {
                 // TODO - check that this really appends data, not overrides
                 read_result = Some(io::copy(decoder, body));
             }
@@ -145,7 +158,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
                 Err(e) => match e.kind() {
                     io::ErrorKind::WouldBlock => Next::read(),
                     _ => {
-                        info!("Response read error for {}: {}", self.url, e);
+                        info!("Response read error for {}: {}", self.request.url, e);
                         self.return_response()
                     }
                 }
@@ -156,7 +169,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
-        info!("Http error for {}: {}", self.url, err);
+        info!("Http error for {}: {}", self.request.url, err);
         self.send_result();
         Next::remove()
     }
@@ -200,7 +213,7 @@ pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
 }
 
 struct RequestQueue {
-    deque: VecDeque<Url>,
+    deque: VecDeque<Request>,
     max_pending: u32,
     n_pending: u32
 }
@@ -214,11 +227,11 @@ impl RequestQueue {
         }
     }
 
-    fn push(&mut self, url: Url) {
-        self.deque.push_back(url);
+    fn push(&mut self, request: Request) {
+        self.deque.push_back(request);
     }
 
-    fn pop(&mut self) -> Option<Url> {
+    fn pop(&mut self) -> Option<Request> {
         if self.n_pending < self.max_pending {
             self.deque.pop_front()
         } else {
@@ -259,7 +272,7 @@ fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
 
     let mut request_queue = RequestQueue::new();
     for url in seeds {
-        request_queue.push(url);
+        request_queue.push(Request::new(url));
     }
 
     while !request_queue.is_empty() {
@@ -271,7 +284,7 @@ fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
             request_queue.incr_pending();
         }
         // Block until response or error (None) arrives
-        let (request_url, response) = rx.recv().unwrap();
+        let (request, response) = rx.recv().unwrap();
         // We received some response or error, decrement number of pending requests
         request_queue.decr_pending();
         if let Some(ref mut urls_file) = urls_file {
@@ -282,10 +295,10 @@ fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
                 "-".to_string()
             };
             // TODO - make it really csv
-            write!(urls_file, "{},{},{}\n", timestamp, status, request_url).unwrap();
+            write!(urls_file, "{},{},{}\n", timestamp, status, request.url).unwrap();
         }
         if let Some(ref response) = response {
-            let result = handle_response(request_url, &response, &mut request_queue);
+            let result = handle_response(&request, &response, &mut request_queue);
             if let Some(response_text) = result {
                 if let Some(ref mut out_file) = out_file {
                     // TODO - write json
@@ -298,16 +311,16 @@ fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
 }
 
 
-fn handle_response(request_url: Url, response: &Response, request_queue: &mut RequestQueue)
+fn handle_response(request: &Request, response: &Response, request_queue: &mut RequestQueue)
         -> Option<String> {
     match response.status {
         StatusCode::Ok => {
             if let Some(ref body) = response.body {
                 // TODO - detect encoding
                 if let Ok(ref body_text) = str::from_utf8(body) {
-                    for link in extract_links(&body_text, &request_url) {
+                    for link in extract_links(&body_text, &request.url) {
                         // TODO - an option to follow only in-domain links
-                        request_queue.push(link);
+                        request_queue.push(Request::new(link));
                     }
                     Some(body_text.to_string())
                 } else {
@@ -323,14 +336,14 @@ fn handle_response(request_url: Url, response: &Response, request_queue: &mut Re
             if let Some(url) = redirect_url(&response) {
                 // TODO - an option to follow only in-domain links
                 // TODO - limit number of redirects
-                request_queue.push(url);
+                request_queue.push(Request::new(url));
             } else {
-                info!("Can not handle redirect for {}: no location", request_url);
+                info!("Can not handle redirect for {}: no location", request.url);
             }
             None
         },
         _ => {
-            info!("Got unexpected status for {}: {:?}", request_url, response.status);
+            info!("Got unexpected status for {}: {:?}", request.url, response.status);
             None
         }
     }
