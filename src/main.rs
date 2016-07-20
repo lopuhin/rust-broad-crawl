@@ -269,6 +269,7 @@ impl RequestQueue {
 }
 
 fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
+    // TODO - check max sockets and default timeout
     let client = Client::new().expect("Failed to create a Client");
     let (tx, rx) = mpsc::channel();
 
