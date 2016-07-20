@@ -7,8 +7,9 @@ extern crate mime;
 
 use std::env;
 use std::io;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::clone::Clone;
 use std::str;
 use std::sync::mpsc;
@@ -27,13 +28,17 @@ use mime::SubLevel::Html;
 
 
 struct CrawlerConfig {
-    timeout: u64
+    timeout: u64,
+    urls_path: Option<String>,
+    out_path: Option<String>
 }
 
 impl Default for CrawlerConfig {
     fn default() -> Self {
         CrawlerConfig {
-            timeout: 120
+            timeout: 120,
+            urls_path: Some("urls.csv".to_string()),
+            out_path: Some("out.jl".to_string())
         }
     }
 }
@@ -67,7 +72,8 @@ struct Handler {
 impl Handler {
     fn make_request(url: Url, timeout: u64,
                     client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
-        let handler = Handler { url: url.clone(), timeout: timeout, sender: tx, result: None };
+        let handler = Handler {
+            url: url.clone(), timeout: timeout, sender: tx, result: None };
         client.request(url, handler).unwrap();
     }
 
@@ -200,10 +206,24 @@ pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
 
 fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
          tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
+
+    // TODO - map
+    let mut urls_file = if let Some(ref urls_path) = crawler_config.urls_path {
+        Some(OpenOptions::new().create(true).append(true).open(urls_path).unwrap())
+    } else { None };
+    let mut out_file = if let Some(ref out_path) = crawler_config.out_path {
+        Some(OpenOptions::new().create(true).append(true).open(out_path).unwrap())
+    } else { None };
+
     loop {
         let response = rx.recv().unwrap();
         debug!("\nReceived {:?} from {} {:?}, body: {}",
                response.status, response.url, response.headers, response.body.is_some());
+        if let Some(ref mut urls_file) = urls_file {
+            let timestamp = 0; // TODO
+            // TODO - make it really csv
+            write!(urls_file, "{},{},{}\n", timestamp, response.status, response.url).unwrap();
+        }
         // TODO - save body
         match response.status {
             StatusCode::Ok => {
@@ -211,6 +231,10 @@ fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
                     debug!("Got body, now decode and save it!");
                     // TODO - detect encoding
                     if let Ok(ref body_text) = str::from_utf8(&body) {
+                        if let Some(ref mut out_file) = out_file {
+                            // TODO - write json
+                            write!(out_file, "{}\n", body_text).unwrap();
+                        }
                         for link in extract_links(&body_text, &response.url) {
                             // TODO - an option to follow only in-domain links
                             Handler::make_request(
