@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::clone::Clone;
+use std::collections::VecDeque;
 use std::str;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -61,17 +62,20 @@ fn is_html(headers: &Headers) -> bool {
     }
 }
 
+type ResultSender = mpsc::Sender<Option<ResponseResult>>;
+type ResultReceiver = mpsc::Receiver<Option<ResponseResult>>;
+
 #[derive(Debug)]
 struct Handler {
     url: Url,
     timeout: u64,
-    sender: mpsc::Sender<ResponseResult>,
+    sender: ResultSender,
     result: Option<ResponseResult>
 }
 
 impl Handler {
     fn make_request(url: Url, timeout: u64,
-                    client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
+                    client: &Client<Handler>, tx: ResultSender) {
         let handler = Handler {
             url: url.clone(), timeout: timeout, sender: tx, result: None };
         client.request(url, handler).unwrap();
@@ -82,8 +86,12 @@ impl Handler {
     }
 
     fn return_response(&self) -> Next {
-        self.sender.send(self.result.clone().unwrap()).unwrap();
+        self.send_result();
         Next::end()
+    }
+
+    fn send_result(&self) {
+        self.sender.send(self.result.clone()).unwrap();
     }
 }
 
@@ -150,27 +158,18 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
-        info!("Some http error for {}: {}", self.url, err);
+        info!("Http error for {}: {}", self.url, err);
+        self.send_result();
         Next::remove()
     }
 }
 
-fn handle_redirect(response: &ResponseResult, crawler_config: &CrawlerConfig,
-                   client: &Client<Handler>, tx: &mpsc::Sender<ResponseResult>) {
-    debug!("Handling redirect");
-    match response.headers.get::<Location>() {
-        Some(&Location(ref location)) => {
-            if let Ok(url) = location.parse() {
-                // TODO - limit number of redirects
-                // TODO - an option to follow only in-domain links
-                Handler::make_request(url, crawler_config.timeout, client, tx.clone());
-            } else {
-                info!("Can not parse location url");
-            }
-        },
-        _ => {
-            info!("Can not handle redirect!");
-        }
+fn redirect_url(response: &ResponseResult) -> Option<Url> {
+    if let Some(&Location(ref location)) = response.headers.get::<Location>() {
+        location.parse().ok()
+    } else {
+        info!("Can not handle redirect for {}: no location", response.url);
+        None
     }
 }
 
@@ -203,9 +202,55 @@ pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
     link_extractor.links.iter().filter_map(|href| base_url.join(href).ok()).collect()
 }
 
+struct RequestQueue {
+    deque: VecDeque<Url>,
+    max_pending: u32,
+    n_pending: u32
+}
 
-fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
-         tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
+impl RequestQueue {
+    fn new() -> Self {
+        RequestQueue {
+            deque: VecDeque::new(),
+            max_pending: 1024,
+            n_pending: 0
+        }
+    }
+
+    fn push(&mut self, url: Url) {
+        self.deque.push_back(url);
+    }
+
+    fn pop(&mut self) -> Option<Url> {
+        if self.n_pending < self.max_pending {
+            self.deque.pop_front()
+        } else {
+            None
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.n_pending == 0 && self.deque.is_empty()
+    }
+
+    fn incr_pending(&mut self) {
+        self.n_pending += 1;
+        if self.n_pending > self.max_pending {
+            panic!("n_pending is greater than max_pending");
+        }
+    }
+
+    fn decr_pending(&mut self) {
+        if self.n_pending == 0 {
+            panic!("decr_pending expected n_pending to be positive");
+        }
+        self.n_pending -= 1;
+    }
+}
+
+fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
+    let client = Client::new().expect("Failed to create a Client");
+    let (tx, rx) = mpsc::channel();
 
     // TODO - map
     let mut urls_file = if let Some(ref urls_path) = crawler_config.urls_path {
@@ -215,49 +260,70 @@ fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
         Some(OpenOptions::new().create(true).append(true).open(out_path).unwrap())
     } else { None };
 
-    loop {
-        let response = rx.recv().unwrap();
-        debug!("Received {:?} from {} {:?}, body: {}",
-               response.status, response.url, response.headers, response.body.is_some());
-        if let Some(ref mut urls_file) = urls_file {
-            let timestamp = 0; // TODO
-            // TODO - make it really csv
-            write!(urls_file, "{},{},{}\n", timestamp, response.status, response.url).unwrap();
+    let mut request_queue = RequestQueue::new();
+    for url in seeds {
+        request_queue.push(url);
+    }
+
+    while !request_queue.is_empty() {
+        // TODO - this should be invoked not only when response arrives
+        // Send new requests, while there are any
+        while let Some(url) = request_queue.pop() {
+            Handler::make_request(
+                url, crawler_config.timeout, &client, tx.clone());
+            request_queue.incr_pending();
         }
-        // TODO - save body
-        match response.status {
-            StatusCode::Ok => {
-                if let Some(body) = response.body {
-                    debug!("Got body, now decode and save it!");
-                    // TODO - detect encoding
-                    if let Ok(ref body_text) = str::from_utf8(&body) {
-                        if let Some(ref mut out_file) = out_file {
-                            // TODO - write json
-                            write!(out_file, "{}\n", body_text).unwrap();
+        // Block until response or error (None) arrives
+        let response = rx.recv().unwrap();
+        // We received some response or error, decrement number of pending requests
+        request_queue.decr_pending();
+        // Process request
+        if let Some(response) = response {
+            // TODO - extract a function
+            if let Some(ref mut urls_file) = urls_file {
+                let timestamp = 0; // TODO
+                // TODO - make it really csv
+                write!(urls_file, "{},{},{}\n", timestamp, response.status, response.url).unwrap();
+            }
+            // TODO - save body
+            match response.status {
+                StatusCode::Ok => {
+                    if let Some(body) = response.body {
+                        // TODO - detect encoding
+                        if let Ok(ref body_text) = str::from_utf8(&body) {
+                            if let Some(ref mut out_file) = out_file {
+                                // TODO - write json
+                                write!(out_file, "{}\n", body_text).unwrap();
+                            }
+                            for link in extract_links(&body_text, &response.url) {
+                                // TODO - an option to follow only in-domain links
+                                request_queue.push(link);
+                            }
+                        } else {
+                            info!("Dropping non-utf8 body");
                         }
-                        for link in extract_links(&body_text, &response.url) {
-                            // TODO - an option to follow only in-domain links
-                            Handler::make_request(
-                                link, crawler_config.timeout, client, tx.clone());
-                        }
-                    } else {
-                        info!("Dropping non-utf8 body");
                     }
+                },
+                StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
+                StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
+                    if let Some(url) = redirect_url(&response) {
+                        // TODO - an option to follow only in-domain links
+                        // TODO - limit number of redirects
+                        request_queue.push(url);
+                    }
+                },
+                _ => {
+                    info!("Got unexpected status for {}: {:?}", response.url, response.status);
                 }
-            },
-            StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
-            StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
-                handle_redirect(&response, crawler_config, client, &tx);
-            },
-            _ => {
-                info!("Got unexpected status for {}: {:?}", response.url, response.status);
             }
         }
     }
+    client.close();
 }
 
 
 pub fn parse_seed(seed: &str) -> Option<Url> {
+    // TODO - not mut
     let mut url = seed.to_string();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         url = format!("http://{}", url)
@@ -277,22 +343,20 @@ fn main() {
         }
     };
 
-    let (tx, rx) = mpsc::channel();
-    let client = Client::new().expect("Failed to create a Client");
     let crawler_config = CrawlerConfig::default();
     let seeds_file = BufReader::new(File::open(seeds_filename).unwrap());
-    for line in seeds_file.lines() {
+    let seeds: Vec<Url> = seeds_file.lines().filter_map(|line| {
         let line = line.unwrap();
         let seed = line.trim();
         if let Some(url) = parse_seed(seed) {
-            Handler::make_request(url, crawler_config.timeout, &client, tx.clone());
+            Some(url)
         } else {
             error!("Error parsing seed \"{}\"", seed);
+            None
         }
-    }
+    }).collect();
 
-    crawl(&client, &crawler_config, tx, rx);
-    client.close();
+    crawl(seeds, &crawler_config);
 }
 
 
