@@ -217,6 +217,16 @@ fn crawl(client: &Client<Handler>,
     }
 }
 
+
+pub fn parse_seed(seed: &str) -> Option<Url> {
+    let mut url = seed.to_string();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        url = format!("http://{}", url)
+    }
+    url.parse().ok()
+}
+
+
 fn main() {
     env_logger::init().unwrap();
 
@@ -233,14 +243,11 @@ fn main() {
     let seeds_file = BufReader::new(File::open(seeds_filename).unwrap());
     for line in seeds_file.lines() {
         let line = line.unwrap();
-        let url = format!("http://{}", line.trim());
-        match url.parse() {
-            Ok(url) => {
-                Handler::make_request(url, &client, tx.clone());
-            },
-            Err(e) => {
-                println!("Error parsing url '{}': {}", url, e);
-            }
+        let seed = line.trim();
+        if let Some(url) = parse_seed(seed) {
+            Handler::make_request(url, &client, tx.clone());
+        } else {
+            error!("Error parsing seed \"{}\"", seed);
         }
     }
 
@@ -262,5 +269,12 @@ mod tests {
         let links = extract_links(&html, &base_url);
         assert_eq!(links, vec!["http://foo.com/boo.txt".parse().unwrap(),
                                "http://example.com/zoo".parse().unwrap()])
+    }
+
+    #[test]
+    fn test_parse_seed() {
+        assert_eq!(parse_seed("foo.com").unwrap(), "http://foo.com".parse().unwrap());
+        assert_eq!(parse_seed("http://foo.com").unwrap(), "http://foo.com".parse().unwrap());
+        assert_eq!(parse_seed("https://foo.com").unwrap(), "https://foo.com".parse().unwrap());
     }
 }
