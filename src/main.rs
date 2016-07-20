@@ -26,6 +26,18 @@ use mime::TopLevel::Text;
 use mime::SubLevel::Html;
 
 
+struct CrawlerConfig {
+    timeout: u64
+}
+
+impl Default for CrawlerConfig {
+    fn default() -> Self {
+        CrawlerConfig {
+            timeout: 120
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ResponseResult {
     url: Url,
@@ -47,18 +59,20 @@ fn is_html(headers: &Headers) -> bool {
 #[derive(Debug)]
 struct Handler {
     url: Url,
+    timeout: u64,
     sender: mpsc::Sender<ResponseResult>,
     result: Option<ResponseResult>
 }
 
 impl Handler {
-    fn make_request(url: Url, client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
-        let handler = Handler { url: url.clone(), sender: tx, result: None };
+    fn make_request(url: Url, timeout: u64,
+                    client: &Client<Handler>, tx: mpsc::Sender<ResponseResult>) {
+        let handler = Handler { url: url.clone(), timeout: timeout, sender: tx, result: None };
         client.request(url, handler).unwrap();
     }
 
     fn read(&self) -> Next {
-        Next::read().timeout(Duration::from_secs(10))
+        Next::read().timeout(Duration::from_secs(self.timeout))
     }
 
     fn return_response(&self) -> Next {
@@ -135,7 +149,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 }
 
-fn handle_redirect(response: &ResponseResult,
+fn handle_redirect(response: &ResponseResult, crawler_config: &CrawlerConfig,
                    client: &Client<Handler>, tx: &mpsc::Sender<ResponseResult>) {
     debug!("Handling redirect");
     match response.headers.get::<Location>() {
@@ -143,7 +157,7 @@ fn handle_redirect(response: &ResponseResult,
             if let Ok(url) = location.parse() {
                 // TODO - limit number of redirects
                 // TODO - an option to follow only in-domain links
-                Handler::make_request(url, client, tx.clone());
+                Handler::make_request(url, crawler_config.timeout, client, tx.clone());
             } else {
                 info!("Can not parse location url");
             }
@@ -184,7 +198,7 @@ pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
 }
 
 
-fn crawl(client: &Client<Handler>,
+fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
          tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
     loop {
         let response = rx.recv().unwrap();
@@ -199,7 +213,8 @@ fn crawl(client: &Client<Handler>,
                     if let Ok(ref body_text) = str::from_utf8(&body) {
                         for link in extract_links(&body_text, &response.url) {
                             // TODO - an option to follow only in-domain links
-                            Handler::make_request(link, client, tx.clone());
+                            Handler::make_request(
+                                link, crawler_config.timeout, client, tx.clone());
                         }
                     } else {
                         info!("Dropping non-utf8 body");
@@ -208,7 +223,7 @@ fn crawl(client: &Client<Handler>,
             },
             StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
             StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
-                handle_redirect(&response, client, &tx);
+                handle_redirect(&response, crawler_config, client, &tx);
             },
             _ => {
                 info!("Got unexpected status {:?}", response.status);
@@ -240,18 +255,19 @@ fn main() {
 
     let (tx, rx) = mpsc::channel();
     let client = Client::new().expect("Failed to create a Client");
+    let crawler_config = CrawlerConfig::default();
     let seeds_file = BufReader::new(File::open(seeds_filename).unwrap());
     for line in seeds_file.lines() {
         let line = line.unwrap();
         let seed = line.trim();
         if let Some(url) = parse_seed(seed) {
-            Handler::make_request(url, &client, tx.clone());
+            Handler::make_request(url, crawler_config.timeout, &client, tx.clone());
         } else {
             error!("Error parsing seed \"{}\"", seed);
         }
     }
 
-    crawl(&client, tx, rx);
+    crawl(&client, &crawler_config, tx, rx);
     client.close();
 }
 
