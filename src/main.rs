@@ -139,7 +139,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
                 Err(e) => match e.kind() {
                     io::ErrorKind::WouldBlock => Next::read(),
                     _ => {
-                        info!("Response read error: {}", e);
+                        info!("Response read error for {}: {}", self.url, e);
                         self.return_response()
                     }
                 }
@@ -150,7 +150,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
-        info!("Some http error: {}", err);
+        info!("Some http error for {}: {}", self.url, err);
         Next::remove()
     }
 }
@@ -217,7 +217,7 @@ fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
 
     loop {
         let response = rx.recv().unwrap();
-        debug!("\nReceived {:?} from {} {:?}, body: {}",
+        debug!("Received {:?} from {} {:?}, body: {}",
                response.status, response.url, response.headers, response.body.is_some());
         if let Some(ref mut urls_file) = urls_file {
             let timestamp = 0; // TODO
@@ -250,7 +250,7 @@ fn crawl(client: &Client<Handler>, crawler_config: &CrawlerConfig,
                 handle_redirect(&response, crawler_config, client, &tx);
             },
             _ => {
-                info!("Got unexpected status {:?}", response.status);
+                info!("Got unexpected status for {}: {:?}", response.url, response.status);
             }
         }
     }
