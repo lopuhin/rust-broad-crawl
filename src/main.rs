@@ -1,8 +1,9 @@
 #![deny(warnings)]
+#[macro_use] extern crate log;
+extern crate env_logger;
 extern crate html5ever;
 extern crate hyper;
 extern crate mime;
-extern crate env_logger;
 
 use std::env;
 use std::io;
@@ -118,7 +119,7 @@ impl hyper::client::Handler<HttpStream> for Handler {
                 Err(e) => match e.kind() {
                     io::ErrorKind::WouldBlock => Next::read(),
                     _ => {
-                        println!("Response read error: {}", e);
+                        info!("Response read error: {}", e);
                         self.return_response()
                     }
                 }
@@ -129,14 +130,14 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 
     fn on_error(&mut self, err: hyper::Error) -> Next {
-        println!("Some http error: {}", err);
+        info!("Some http error: {}", err);
         Next::remove()
     }
 }
 
 fn handle_redirect(response: &ResponseResult,
                    client: &Client<Handler>, tx: &mpsc::Sender<ResponseResult>) {
-    println!("Handling redirect");
+    debug!("Handling redirect");
     match response.headers.get::<Location>() {
         Some(&Location(ref location)) => {
             if let Ok(url) = location.parse() {
@@ -144,11 +145,11 @@ fn handle_redirect(response: &ResponseResult,
                 // TODO - an option to follow only in-domain links
                 Handler::make_request(url, client, tx.clone());
             } else {
-                println!("Can not parse location url");
+                info!("Can not parse location url");
             }
         },
         _ => {
-            println!("Can not handle redirect!");
+            info!("Can not handle redirect!");
         }
     }
 }
@@ -187,13 +188,13 @@ fn crawl(client: &Client<Handler>,
          tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
     loop {
         let response = rx.recv().unwrap();
-        println!("\nReceived {:?} from {} {:?}, body: {}",
-                 response.status, response.url, response.headers, response.body.is_some());
+        debug!("\nReceived {:?} from {} {:?}, body: {}",
+               response.status, response.url, response.headers, response.body.is_some());
         // TODO - save body
         match response.status {
             StatusCode::Ok => {
                 if let Some(body) = response.body {
-                    println!("Got body, now decode and save it!");
+                    debug!("Got body, now decode and save it!");
                     // TODO - detect encoding
                     if let Ok(ref body_text) = str::from_utf8(&body) {
                         for link in extract_links(&body_text, &response.url) {
@@ -201,7 +202,7 @@ fn crawl(client: &Client<Handler>,
                             Handler::make_request(link, client, tx.clone());
                         }
                     } else {
-                        println!("Dropping non-utf8 body");
+                        info!("Dropping non-utf8 body");
                     }
                 }
             },
@@ -210,7 +211,7 @@ fn crawl(client: &Client<Handler>,
                 handle_redirect(&response, client, &tx);
             },
             _ => {
-                println!("Got unexpected status {:?}", response.status);
+                info!("Got unexpected status {:?}", response.status);
             }
         }
     }
@@ -219,18 +220,18 @@ fn crawl(client: &Client<Handler>,
 fn main() {
     env_logger::init().unwrap();
 
-    let filename = match env::args().nth(1) {
-        Some(filename) => filename,
+    let seeds_filename = match env::args().nth(1) {
+        Some(seeds_filename) => seeds_filename,
         None => {
-            println!("Usage: client <urls file>");
+            error!("Usage: client <urls file>");
             return;
         }
     };
 
     let (tx, rx) = mpsc::channel();
     let client = Client::new().expect("Failed to create a Client");
-    let urls_file = BufReader::new(File::open(filename).unwrap());
-    for line in urls_file.lines() {
+    let seeds_file = BufReader::new(File::open(seeds_filename).unwrap());
+    for line in seeds_file.lines() {
         let line = line.unwrap();
         let url = format!("http://{}", line.trim());
         match url.parse() {
