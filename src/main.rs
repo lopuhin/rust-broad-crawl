@@ -18,7 +18,8 @@ use std::time::Duration;
 
 use html5ever::tokenizer::{TokenSink, Token, Tokenizer, TokenizerOpts};
 use html5ever::tendril::{StrTendril};
-use hyper::client::{Client, Request, Response, DefaultTransport as HttpStream};
+use hyper::client::{Client, Request as HyperRequest, Response as HyperResponse,
+                    DefaultTransport as HttpStream};
 use hyper::header::{Connection, ContentType, Location};
 use hyper::{Url, Decoder, Encoder, Next};
 use hyper::status::StatusCode;
@@ -45,8 +46,7 @@ impl Default for CrawlerConfig {
 }
 
 #[derive(Debug, Clone)]
-struct ResponseResult {
-    url: Url,
+struct Response {
     status: StatusCode,
     headers: Headers,
     body: Option<Vec<u8>>
@@ -62,20 +62,19 @@ fn is_html(headers: &Headers) -> bool {
     }
 }
 
-type ResultSender = mpsc::Sender<Option<ResponseResult>>;
-type ResultReceiver = mpsc::Receiver<Option<ResponseResult>>;
+type ResultSender = mpsc::Sender<(Url, Option<Response>)>;
+type ResultReceiver = mpsc::Receiver<(Url, Option<Response>)>;
 
 #[derive(Debug)]
 struct Handler {
     url: Url,
     timeout: u64,
     sender: ResultSender,
-    result: Option<ResponseResult>
+    result: Option<Response>
 }
 
 impl Handler {
-    fn make_request(url: Url, timeout: u64,
-                    client: &Client<Handler>, tx: ResultSender) {
+    fn make_request(url: Url, timeout: u64, client: &Client<Handler>, tx: ResultSender) {
         let handler = Handler {
             url: url.clone(), timeout: timeout, sender: tx, result: None };
         client.request(url, handler).unwrap();
@@ -91,12 +90,12 @@ impl Handler {
     }
 
     fn send_result(&self) {
-        self.sender.send(self.result.clone()).unwrap();
+        self.sender.send((self.url.clone(), self.result.clone())).unwrap();
     }
 }
 
 impl hyper::client::Handler<HttpStream> for Handler {
-    fn on_request(&mut self, req: &mut Request) -> Next {
+    fn on_request(&mut self, req: &mut HyperRequest) -> Next {
         req.headers_mut().set(Connection::close());
         // TODO - set user-agent
         self.read()
@@ -106,13 +105,12 @@ impl hyper::client::Handler<HttpStream> for Handler {
         self.read()
     }
 
-    fn on_response(&mut self, response: Response) -> Next {
+    fn on_response(&mut self, response: HyperResponse) -> Next {
         // println!("Response: {}", response.status());
         // println!("Headers:\n{}", response.headers());
         let status = response.status();
         let headers = response.headers();
-        self.result = Some(ResponseResult {
-            url: self.url.clone(),
+        self.result = Some(Response {
             status: status.clone(),
             headers: headers.clone(),
             body: None
@@ -164,11 +162,10 @@ impl hyper::client::Handler<HttpStream> for Handler {
     }
 }
 
-fn redirect_url(response: &ResponseResult) -> Option<Url> {
+fn redirect_url(response: &Response) -> Option<Url> {
     if let Some(&Location(ref location)) = response.headers.get::<Location>() {
         location.parse().ok()
     } else {
-        info!("Can not handle redirect for {}: no location", response.url);
         None
     }
 }
@@ -274,51 +271,69 @@ fn crawl(seeds: Vec<Url>, crawler_config: &CrawlerConfig) {
             request_queue.incr_pending();
         }
         // Block until response or error (None) arrives
-        let response = rx.recv().unwrap();
+        let (request_url, response) = rx.recv().unwrap();
         // We received some response or error, decrement number of pending requests
         request_queue.decr_pending();
-        // Process request
-        if let Some(response) = response {
-            // TODO - extract a function
-            if let Some(ref mut urls_file) = urls_file {
-                let timestamp = 0; // TODO
-                // TODO - make it really csv
-                write!(urls_file, "{},{},{}\n", timestamp, response.status, response.url).unwrap();
-            }
-            // TODO - save body
-            match response.status {
-                StatusCode::Ok => {
-                    if let Some(body) = response.body {
-                        // TODO - detect encoding
-                        if let Ok(ref body_text) = str::from_utf8(&body) {
-                            if let Some(ref mut out_file) = out_file {
-                                // TODO - write json
-                                write!(out_file, "{}\n", body_text).unwrap();
-                            }
-                            for link in extract_links(&body_text, &response.url) {
-                                // TODO - an option to follow only in-domain links
-                                request_queue.push(link);
-                            }
-                        } else {
-                            info!("Dropping non-utf8 body");
-                        }
-                    }
-                },
-                StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
-                StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
-                    if let Some(url) = redirect_url(&response) {
-                        // TODO - an option to follow only in-domain links
-                        // TODO - limit number of redirects
-                        request_queue.push(url);
-                    }
-                },
-                _ => {
-                    info!("Got unexpected status for {}: {:?}", response.url, response.status);
+        if let Some(ref mut urls_file) = urls_file {
+            let timestamp = 0; // TODO
+            let status = if let Some(ref response) = response {
+                response.status.to_string()
+            } else {
+                "-".to_string()
+            };
+            // TODO - make it really csv
+            write!(urls_file, "{},{},{}\n", timestamp, status, request_url).unwrap();
+        }
+        if let Some(ref response) = response {
+            let result = handle_response(request_url, &response, &mut request_queue);
+            if let Some(response_text) = result {
+                if let Some(ref mut out_file) = out_file {
+                    // TODO - write json
+                    write!(out_file, "{}\n", response_text).unwrap();
                 }
             }
         }
     }
     client.close();
+}
+
+
+fn handle_response(request_url: Url, response: &Response, request_queue: &mut RequestQueue)
+        -> Option<String> {
+    match response.status {
+        StatusCode::Ok => {
+            if let Some(ref body) = response.body {
+                // TODO - detect encoding
+                if let Ok(ref body_text) = str::from_utf8(body) {
+                    for link in extract_links(&body_text, &request_url) {
+                        // TODO - an option to follow only in-domain links
+                        request_queue.push(link);
+                    }
+                    Some(body_text.to_string())
+                } else {
+                    info!("Dropping non-utf8 body");
+                    None
+                }
+            } else {
+                None
+            }
+        },
+        StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
+        StatusCode::TemporaryRedirect | StatusCode::PermanentRedirect => {
+            if let Some(url) = redirect_url(&response) {
+                // TODO - an option to follow only in-domain links
+                // TODO - limit number of redirects
+                request_queue.push(url);
+            } else {
+                info!("Can not handle redirect for {}: no location", request_url);
+            }
+            None
+        },
+        _ => {
+            info!("Got unexpected status for {}: {:?}", request_url, response.status);
+            None
+        }
+    }
 }
 
 
