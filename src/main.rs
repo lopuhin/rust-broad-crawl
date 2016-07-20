@@ -1,4 +1,5 @@
 #![deny(warnings)]
+extern crate html5ever;
 extern crate hyper;
 extern crate mime;
 extern crate env_logger;
@@ -8,9 +9,12 @@ use std::io;
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 use std::clone::Clone;
+use std::str;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use html5ever::tokenizer::{TokenSink, Token, Tokenizer, TokenizerOpts};
+use html5ever::tendril::{StrTendril};
 use hyper::client::{Client, Request, Response, DefaultTransport as HttpStream};
 use hyper::header::{Connection, ContentType, Location};
 use hyper::{Url, Decoder, Encoder, Next};
@@ -136,8 +140,9 @@ fn handle_redirect(response: &ResponseResult,
     match response.headers.get::<Location>() {
         Some(&Location(ref location)) => {
             if let Ok(url) = location.parse() {
-                // TODO - limit redirects
-                Handler::make_request(url, &client, tx.clone());
+                // TODO - limit number of redirects
+                // TODO - an option to follow only in-domain links
+                Handler::make_request(url, client, tx.clone());
             } else {
                 println!("Can not parse location url");
             }
@@ -148,17 +153,56 @@ fn handle_redirect(response: &ResponseResult,
     }
 }
 
+
+struct LinkExtractor {
+    links: Vec<StrTendril>
+}
+
+impl TokenSink for LinkExtractor {
+    fn process_token(&mut self, token: Token) {
+        if let Token::TagToken(tag) = token {
+            if tag.name.eq_str_ignore_ascii_case("a") {
+                for attr in tag.attrs {
+                    if attr.name.local.eq_str_ignore_ascii_case("href") {
+                        self.links.push(attr.value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
+    let mut tokenizer = Tokenizer::new(
+        LinkExtractor{links: Vec::new()}, TokenizerOpts::default());
+    tokenizer.feed(StrTendril::from(body));
+    tokenizer.run();
+    tokenizer.end();
+    let link_extractor = tokenizer.unwrap();
+    link_extractor.links.iter().filter_map(|href| base_url.join(href).ok()).collect()
+}
+
+
 fn crawl(client: &Client<Handler>,
          tx: mpsc::Sender<ResponseResult>, rx: mpsc::Receiver<ResponseResult>) {
     loop {
         let response = rx.recv().unwrap();
         println!("\nReceived {:?} from {} {:?}, body: {}",
                  response.status, response.url, response.headers, response.body.is_some());
-        // TODO - extract links, save body
+        // TODO - save body
         match response.status {
             StatusCode::Ok => {
-                if let Some(_body) = response.body {
+                if let Some(body) = response.body {
                     println!("Got body, now decode and save it!");
+                    // TODO - detect encoding
+                    if let Ok(ref body_text) = str::from_utf8(&body) {
+                        for link in extract_links(&body_text, &response.url) {
+                            // TODO - an option to follow only in-domain links
+                            Handler::make_request(link, client, tx.clone());
+                        }
+                    } else {
+                        println!("Dropping non-utf8 body");
+                    }
                 }
             },
             StatusCode::MovedPermanently | StatusCode::Found | StatusCode::SeeOther |
@@ -201,4 +245,21 @@ fn main() {
 
     crawl(&client, tx, rx);
     client.close();
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_links() {
+        let base_url = "http://foo.com/a/".parse().unwrap();
+        let html = "<b><a href=\"../boo.txt\">a boo</a></b>\
+                    <a name=\"foo\"></a>\
+                    <a href=\"http://example.com/zoo\">a zoo</a>";
+        let links = extract_links(&html, &base_url);
+        assert_eq!(links, vec!["http://foo.com/boo.txt".parse().unwrap(),
+                               "http://example.com/zoo".parse().unwrap()])
+    }
 }
