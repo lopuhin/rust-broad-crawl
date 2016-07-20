@@ -209,7 +209,17 @@ pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
     tokenizer.run();
     tokenizer.end();
     let link_extractor = tokenizer.unwrap();
-    link_extractor.links.iter().filter_map(|href| base_url.join(href).ok()).collect()
+    link_extractor.links.iter().filter_map(|href| {
+        if let Ok(url) = base_url.join(href) {
+            let supported_scheme = {
+                let scheme = url.scheme();
+                scheme == "http" || scheme == "https"
+            };
+            if supported_scheme { Some(url) } else { None }
+        } else {
+            None
+        }
+    }).collect()
 }
 
 struct RequestQueue {
@@ -393,10 +403,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_links() {
+    fn test_extract_links() {
         let base_url = "http://foo.com/a/".parse().unwrap();
         let html = "<b><a href=\"../boo.txt\">a boo</a></b>\
                     <a name=\"foo\"></a>\
+                    <a href=\"javascript:void(0)\"></a>\
+                    <a href=\"ftp://foo.com\"></a>\
                     <a href=\"http://example.com/zoo\">a zoo</a>";
         let links = extract_links(&html, &base_url);
         assert_eq!(links, vec!["http://foo.com/boo.txt".parse().unwrap(),
