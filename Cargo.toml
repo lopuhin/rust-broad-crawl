@@ -1,5 +1,5 @@
 [package]
-name = "rust-broad-crawl"
+name = "crawler"
 version = "0.1.0"
 authors = ["Konstantin Lopuhin <kostia.lopuhin@gmail.com>"]
 
