@@ -48,15 +48,13 @@ impl RequestQueue {
                     if request.is_some() {
                         return request;
                     }
-                    // TODO - remove this empty domain queue
                 }
             }
         }
-        return None;
+        None
     }
 
     pub fn is_empty(&self) -> bool {
-        // FIXME - this is not correct while we do not remove the empty domain queues
         self.n_pending == 0 && self.deques.is_empty()
     }
 
@@ -66,11 +64,20 @@ impl RequestQueue {
         }
         self.n_pending -= 1;
         let key = self.get_key(request);
+        let mut domain_queue_empty = false;
         if let Some(domain_queue) = self.deques.get_mut(&key) {
             if domain_queue.n_pending == 0 {
                 panic!("decr_pending expected domain_queue.n_pending to be positive");
             }
             domain_queue.n_pending -= 1;
+            if domain_queue.n_pending == 0 && domain_queue.deque.is_empty() {
+                // The queue can become empty in self.pop too, but then it will have n_pending > 0,
+                // so it is enough to check that here.
+                domain_queue_empty = true;
+            }
+        }
+        if domain_queue_empty {
+            self.deques.remove(&key);
         }
     }
 
@@ -91,9 +98,15 @@ mod tests {
     #[test]
     fn test_push_pop() {
         let mut queue = RequestQueue::new(2);
+        assert_eq!(queue.is_empty(), true);
         queue.push(Request::from_str("http://domain-1.com/a"));
+        assert_eq!(queue.is_empty(), false);
         assert_eq!(queue.pop().unwrap().url.as_str(), "http://domain-1.com/a");
+        assert_eq!(queue.is_empty(), false);
+        queue.decr_pending(&Request::from_str("http://domain-1.com/a"));
+        assert_eq!(queue.is_empty(), true);
         assert_eq!(queue.pop(), None);
+        assert_eq!(queue.is_empty(), true);
     }
 
     #[test]
