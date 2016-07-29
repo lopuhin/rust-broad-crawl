@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use url::Host;
 
@@ -12,6 +12,7 @@ struct DomainQueue {
 
 
 pub struct RequestQueue {
+    seen_requests: HashSet<u64>,
     deques: HashMap<Option<Host>, DomainQueue>,
     n_pending: u32,
     max_pending: u32,
@@ -21,6 +22,7 @@ pub struct RequestQueue {
 impl RequestQueue {
     pub fn new(max_per_domain: u32) -> Self {
         RequestQueue {
+            seen_requests: HashSet::new(),
             deques: HashMap::new(),
             max_pending: 1024,
             max_per_domain: max_per_domain,
@@ -29,17 +31,21 @@ impl RequestQueue {
     }
 
     pub fn push(&mut self, request: Request) {
-        let key = self.get_key(&request);
-        let domain_queue = self.deques.entry(key).or_insert_with(|| {
-            DomainQueue { deque: VecDeque::new(), n_pending: 0 }
-        });
-        domain_queue.deque.push_back(request);
+        let fingerprint = request.get_fingerprint();
+        if self.seen_requests.insert(fingerprint) {
+            let key = self.get_key(&request);
+            let domain_queue = self.deques.entry(key).or_insert_with(|| {
+                DomainQueue { deque: VecDeque::new(), n_pending: 0 }
+            });
+            domain_queue.deque.push_back(request);
+        }
     }
 
     pub fn pop(&mut self) -> Option<Request> {
         // Find the first domain queue that is not empty and has free slots, and pop from it.
         if self.n_pending < self.max_pending {
-            // FIXME - order is not random here
+            // FIXME - order is not random here, but this is not a huge problem, because empty
+            // queues are removed.
             for domain_queue in self.deques.values_mut() {
                 if domain_queue.n_pending < self.max_per_domain {
                     self.n_pending += 1;
@@ -139,5 +145,15 @@ mod tests {
         while let Some(request) = queue.pop() {
             println!("{:?}", request);
         }
+    }
+
+    #[test]
+    fn test_duplicates() {
+        // Run with $ cargo test test_sampling -- --nocapture
+        let mut queue = RequestQueue::new(3);
+        queue.push(Request::from_str("http://domain-1.com/a"));
+        queue.push(Request::from_str("http://domain-1.com/a"));
+        assert!(queue.pop().is_some());
+        assert_eq!(queue.pop(), None);
     }
 }
