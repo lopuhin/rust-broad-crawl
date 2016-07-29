@@ -3,18 +3,20 @@ use std::fs::{File, OpenOptions};
 use std::clone::Clone;
 use std::str;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use hyper::client::Client;
 use hyper::header::{Location};
 use hyper::Url;
 use hyper::status::StatusCode;
 
+use downloader::make_request;
+use link_extraction::extract_links;
+use queue::RequestQueue;
 use request::Request;
 use response::Response;
 use settings::Settings;
-use downloader::make_request;
-use queue::RequestQueue;
-use link_extraction::extract_links;
+use stats::CrawlStats;
 
 
 pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
@@ -29,6 +31,8 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
     let mut out_file = if let Some(ref out_path) = settings.out_path {
         Some(OpenOptions::new().create(true).append(true).open(out_path).unwrap())
     } else { None };
+
+    let mut stats = CrawlStats::new(Duration::from_secs(10));
 
     let mut request_queue = RequestQueue::new(settings.concurrent_requests_per_domain);
     for url in seeds {
@@ -45,6 +49,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         let (request, response) = rx.recv().unwrap();
         // We received some response or error, decrement number of pending requests
         request_queue.decr_pending(&request);
+        stats.record_response(&response);
         if let Some(ref mut urls_file) = urls_file {
             write_response_log(urls_file, &request, &response);
         }
@@ -57,6 +62,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
                 }
             }
         }
+        stats.maybe_report();
     }
     client.close();
 }

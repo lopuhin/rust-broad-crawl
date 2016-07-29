@@ -10,8 +10,7 @@ use std::io::{BufRead, BufReader};
 use std::fs::File;
 use std::str;
 
-use crawler::{crawl, Url};
-use crawler::settings::Settings;
+use crawler::{crawl, Url, Settings};
 
 
 pub fn parse_seed(seed: &str) -> Option<Url> {
