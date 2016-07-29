@@ -39,7 +39,7 @@ impl RequestQueue {
     pub fn pop(&mut self) -> Option<Request> {
         // Find the first domain queue that is not empty and has free slots, and pop from it.
         if self.n_pending < self.max_pending {
-            // FIXME - not sure if order is really random at each invocation here
+            // FIXME - order is not random here
             for domain_queue in self.deques.values_mut() {
                 if domain_queue.n_pending < self.max_per_domain {
                     self.n_pending += 1;
@@ -111,5 +111,20 @@ mod tests {
         queue.decr_pending(&Request::from_str("http://domain-1.com/a"));
         assert_eq!(queue.pop().unwrap().url.as_str(), "http://domain-1.com/c");
         assert_eq!(queue.pop(), None);
+    }
+
+    #[test]
+    fn test_sampling() {
+        // Run with $ cargo test test_sampling -- --nocapture
+        let mut queue = RequestQueue::new(3);
+        queue.push(Request::from_str("http://domain-1.com/a"));
+        queue.push(Request::from_str("http://domain-1.com/b"));
+        queue.push(Request::from_str("http://domain-1.com/c"));
+        queue.push(Request::from_str("http://domain-2.com/a"));
+        queue.push(Request::from_str("http://domain-2.com/b"));
+        queue.push(Request::from_str("http://domain-2.com/c"));
+        while let Some(request) = queue.pop() {
+            println!("{:?}", request);
+        }
     }
 }
