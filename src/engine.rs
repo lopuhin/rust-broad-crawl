@@ -30,7 +30,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         Some(OpenOptions::new().create(true).append(true).open(out_path).unwrap())
     } else { None };
 
-    let mut request_queue = RequestQueue::new();
+    let mut request_queue = RequestQueue::new(settings.concurrent_requests_per_domain);
     for url in seeds {
         request_queue.push(Request::new(url));
     }
@@ -41,12 +41,11 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         while let Some(url) = request_queue.pop() {
             make_request(
                 url, settings.timeout, &client, tx.clone());
-            request_queue.incr_pending();
         }
         // Block until response or error (None) arrives
         let (request, response) = rx.recv().unwrap();
         // We received some response or error, decrement number of pending requests
-        request_queue.decr_pending();
+        request_queue.decr_pending(&request);
         if let Some(ref mut urls_file) = urls_file {
             let timestamp = 0; // TODO
             let status = if let Some(ref response) = response {

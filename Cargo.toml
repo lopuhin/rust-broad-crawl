@@ -9,3 +9,4 @@ html5ever = "*"
 hyper = {git = "https://github.com/hyperium/hyper.git", rev = "6d54a4d"}
 log = "*"
 mime = "*"
+url = "1.1.1"

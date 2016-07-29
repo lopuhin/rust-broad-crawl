@@ -1,8 +1,9 @@
 #![deny(warnings)]
 #[macro_use] extern crate log;
-extern crate hyper;
 extern crate html5ever;
+extern crate hyper;
 extern crate mime;
+extern crate url;
 
 pub mod downloader;
 pub mod engine;
