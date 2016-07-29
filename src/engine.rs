@@ -1,5 +1,5 @@
 use std::io::{Write};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::clone::Clone;
 use std::str;
 use std::sync::mpsc;
@@ -36,7 +36,6 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
     }
 
     while !request_queue.is_empty() {
-        // TODO - this should be invoked not only when response arrives
         // Send new requests, while there are any
         while let Some(url) = request_queue.pop() {
             make_request(
@@ -47,14 +46,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         // We received some response or error, decrement number of pending requests
         request_queue.decr_pending(&request);
         if let Some(ref mut urls_file) = urls_file {
-            let timestamp = 0; // TODO
-            let status = if let Some(ref response) = response {
-                response.status.to_string()
-            } else {
-                "-".to_string()
-            };
-            // TODO - make it really csv
-            write!(urls_file, "{},{},{}\n", timestamp, status, request.url).unwrap();
+            write_response_log(urls_file, &request, &response);
         }
         if let Some(ref response) = response {
             let result = handle_response(&request, &response, &mut request_queue);
@@ -68,7 +60,6 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
     }
     client.close();
 }
-
 
 fn handle_response(request: &Request, response: &Response, request_queue: &mut RequestQueue)
     -> Option<String> {
@@ -115,4 +106,15 @@ fn redirect_url(response: &Response) -> Option<Url> {
     } else {
         None
     }
+}
+
+fn write_response_log(urls_file: &mut File, request: &Request, response: &Option<Response>) {
+    let timestamp = 0; // TODO
+    let status = if let &Some(ref response) = response {
+        response.status.to_string()
+    } else {
+        "-".to_string()
+    };
+    // TODO - make it really csv
+    write!(urls_file, "{},{},{}\n", timestamp, status, request.url).unwrap();
 }
