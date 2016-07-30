@@ -80,7 +80,7 @@ fn handle_response(request: &Request, response: &Response, request_queue: &mut R
                     }
                     Some(body_text.to_string())
                 } else {
-                    info!("Dropping non-utf8 body");
+                    info!("Dropping non utf8 body for {}", request.url);
                     None
                 }
             } else {

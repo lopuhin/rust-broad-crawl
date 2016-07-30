@@ -91,6 +91,7 @@ impl RequestQueue {
 
     fn get_key(&self, request: &Request) -> Option<Host> {
         if let Some(host) = request.url.host() {
+            // TODO - extract top-level domain
             Some(host.to_owned())
         } else {
             None
