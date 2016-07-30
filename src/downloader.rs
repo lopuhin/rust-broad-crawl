@@ -8,7 +8,7 @@ use hyper::client::{Client, Request as HyperRequest, Response as HyperResponse,
 use hyper::header::{Connection, ContentType};
 use hyper::{Decoder, Encoder, Next};
 use hyper::status::StatusCode;
-use hyper::header::Headers;
+use hyper::header::{Headers, UserAgent};
 use mime::Mime;
 use mime::TopLevel::Text;
 use mime::SubLevel::Html;
@@ -21,17 +21,23 @@ pub type ResultSender = mpsc::Sender<(Request, Option<Response>)>;
 
 #[derive(Debug)]
 pub struct Handler {
-    timeout: u64,
-    sender: ResultSender,
     request: Request,
-    response: Option<Response>
+    response: Option<Response>,
+    sender: ResultSender,
+    timeout: u64,
+    user_agent: String,
 }
 
-pub fn make_request(request: Request,
-                    timeout: u64, client: &Client<Handler>, tx: ResultSender) {
+pub fn make_request(request: Request, client: &Client<Handler>, tx: ResultSender,
+                    timeout: u64, user_agent: &str)  {
     let url = request.url.clone();
     let handler = Handler {
-        request: request, timeout: timeout, sender: tx, response: None };
+        request: request,
+        response: None,
+        sender: tx,
+        timeout: timeout,
+        user_agent: user_agent.to_owned(),
+    };
     client.request(url, handler).unwrap();
 }
 
@@ -62,8 +68,9 @@ impl Handler {
 
 impl hyper::client::Handler<HttpStream> for Handler {
     fn on_request(&mut self, req: &mut HyperRequest) -> Next {
-        req.headers_mut().set(Connection::close());
-        // TODO - set user-agent
+        let mut headers = req.headers_mut();
+        headers.set(Connection::close());
+        headers.set(UserAgent(self.user_agent.clone()));
         self.read()
     }
 

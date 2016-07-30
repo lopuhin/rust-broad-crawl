@@ -43,7 +43,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         // Send new requests, while there are any
         while let Some(url) = request_queue.pop() {
             make_request(
-                url, settings.timeout, &client, tx.clone());
+                url, &client, tx.clone(), settings.timeout, &settings.user_agent);
         }
         // Block until response or error (None) arrives
         let (request, response) = rx.recv().unwrap();
