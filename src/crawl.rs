@@ -10,7 +10,7 @@ use hyper::header::{Location};
 use hyper::Url;
 use hyper::status::StatusCode;
 
-use downloader::make_request;
+use downloader::{Handler, make_request};
 use link_extraction::extract_links;
 use queue::RequestQueue;
 use request::Request;
@@ -20,8 +20,10 @@ use stats::CrawlStats;
 
 
 pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
-    // TODO - check max sockets and default timeout
-    let client = Client::new().expect("Failed to create a Client");
+    let client = Client::<Handler>::configure()
+        .max_sockets(16384)
+        .connect_timeout(Duration::from_secs(120))
+        .build().expect("Failed to create a Client");
     let (tx, rx) = mpsc::channel();
 
     // TODO - map

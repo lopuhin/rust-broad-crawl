@@ -45,7 +45,7 @@ impl Stats {
         info!("Read responses:       {}", self.n_read_responses);
         let dt = self.start.elapsed();
         let dt_s: f64 = dt.as_secs() as f64 + 1e-9 * dt.subsec_nanos() as f64;
-        info!("Rpm (read responses): {:.0}", self.n_read_responses as f64 / dt_s * 60.);
+        info!("rpm (read responses): {:.0}", self.n_read_responses as f64 / dt_s * 60.);
     }
 }
 
@@ -69,7 +69,7 @@ impl CrawlStats {
         if elapsed < self.report_every {
             return;
         }
-        info!("Crawl stats for the last {:?} s:", self.report_every.as_secs());
+        info!("Crawl stats (last {:?} s):", self.report_every.as_secs());
         self.last_stats.report();
         info!("Crawl stats (overall):");
         self.all_stats.report();

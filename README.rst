@@ -32,3 +32,4 @@ Running
 To start a broad crawl from seeds in ``top-1k.txt``, run::
 
     RUST_LOG=crawler=info cargo run --release top-1k.txt
+
