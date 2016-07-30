@@ -48,10 +48,10 @@ impl RequestQueue {
             // queues are removed.
             for domain_queue in self.deques.values_mut() {
                 if domain_queue.n_pending < self.max_per_domain {
-                    self.n_pending += 1;
-                    domain_queue.n_pending += 1;
                     let request = domain_queue.deque.pop_front();
                     if request.is_some() {
+                        self.n_pending += 1;
+                        domain_queue.n_pending += 1;
                         return request;
                     }
                 }
@@ -81,6 +81,8 @@ impl RequestQueue {
                 // so it is enough to check that here.
                 domain_queue_empty = true;
             }
+        } else {
+            panic!("decr_pending could not find the queue for request");
         }
         if domain_queue_empty {
             self.deques.remove(&key);
@@ -112,6 +114,19 @@ mod tests {
         queue.decr_pending(&Request::from_str("http://domain-1.com/a"));
         assert_eq!(queue.is_empty(), true);
         assert_eq!(queue.pop(), None);
+        assert_eq!(queue.is_empty(), true);
+    }
+
+    #[test]
+    fn test_pop_empty() {
+        let mut queue = RequestQueue::new(2);
+        queue.push(Request::from_str("http://domain-1.com/a"));
+        assert_eq!(queue.is_empty(), false);
+        assert_eq!(queue.pop().unwrap().url.as_str(), "http://domain-1.com/a");
+        assert_eq!(queue.is_empty(), false);
+        assert_eq!(queue.pop(), None);
+        assert_eq!(queue.is_empty(), false);
+        queue.decr_pending(&Request::from_str("http://domain-1.com/a"));
         assert_eq!(queue.is_empty(), true);
     }
 
