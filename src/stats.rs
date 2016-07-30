@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use response::Response;
+use queue::RequestQueue;
 
 
 pub struct CrawlStats {
@@ -64,11 +65,13 @@ impl CrawlStats {
         self.all_stats.record_response(response);
     }
 
-    pub fn maybe_report(&mut self) {
+    pub fn maybe_report(&mut self, request_queue: &RequestQueue) {
         let elapsed = self.last_report.elapsed();
         if elapsed < self.report_every {
             return;
         }
+        info!("Request queue: {} domains, {} requests pending",
+              request_queue.get_n_domains(), request_queue.get_n_pending());
         info!("Crawl stats (last {:?} s):", self.report_every.as_secs());
         self.last_stats.report();
         info!("Crawl stats (overall):");

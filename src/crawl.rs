@@ -64,7 +64,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
                 }
             }
         }
-        stats.maybe_report();
+        stats.maybe_report(&request_queue);
     }
     client.close();
 }

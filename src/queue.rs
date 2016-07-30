@@ -89,6 +89,14 @@ impl RequestQueue {
         }
     }
 
+    pub fn get_n_domains(&self) -> usize {
+        return self.deques.len();
+    }
+
+    pub fn get_n_pending(&self) -> u32 {
+        return self.n_pending;
+    }
+
     fn get_key(&self, request: &Request) -> Option<Host> {
         if let Some(host) = request.url.host() {
             // TODO - extract top-level domain
