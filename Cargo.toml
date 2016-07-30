@@ -6,7 +6,7 @@ authors = ["Konstantin Lopuhin <kostia.lopuhin@gmail.com>"]
 [dependencies]
 env_logger = "*"
 html5ever = "*"
-hyper = {git = "https://github.com/hyperium/hyper.git", rev = "6d54a4d"}
+hyper = {git = "https://github.com/hyperium/hyper.git"}
 log = "*"
 mime = "*"
 url = "1.1.1"
