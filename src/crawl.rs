@@ -10,6 +10,7 @@ use hyper::client::Client;
 use hyper::header::{Location};
 use hyper::Url;
 use hyper::status::StatusCode;
+use rustc_serialize::json;
 
 use downloader::{Handler, make_request};
 use link_extraction::extract_links;
@@ -55,10 +56,10 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         }
         if let Some(ref response) = response {
             let result = handle_response(&request, &response, &mut request_queue);
-            if let Some(response_text) = result {
+            if let Some(result) = result {
                 if let Some(ref mut out_file) = out_file {
-                    // TODO - write json
-                    write!(out_file, "{}\n", response_text).unwrap();
+                    write!(out_file, "{}\n", json::encode(&result).unwrap()).unwrap();
+                    out_file.flush().unwrap();
                 }
             }
         }
@@ -67,8 +68,14 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
     client.close();
 }
 
+#[derive(RustcEncodable)]
+struct CrawlResult {
+    body: String,
+    url: String,
+}
+
 fn handle_response(request: &Request, response: &Response, request_queue: &mut RequestQueue)
-    -> Option<String> {
+        -> Option<CrawlResult> {
     match response.status {
         StatusCode::Ok => {
             if let Some(ref body) = response.body {
@@ -78,7 +85,10 @@ fn handle_response(request: &Request, response: &Response, request_queue: &mut R
                         // TODO - an option to follow only in-domain links
                         request_queue.push(Request::new(link));
                     }
-                    Some(body_text.to_string())
+                    Some(CrawlResult {
+                        body: body_text.to_string(),
+                        url: request.url.as_str().to_owned(),
+                    })
                 } else {
                     info!("Dropping non utf8 body for {}", request.url);
                     None

@@ -4,6 +4,7 @@ extern crate csv;
 extern crate html5ever;
 extern crate hyper;
 extern crate mime;
+extern crate rustc_serialize;
 extern crate url;
 
 mod crawl;

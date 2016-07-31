@@ -10,4 +10,5 @@ html5ever = "*"
 hyper = {git = "https://github.com/hyperium/hyper.git"}
 log = "*"
 mime = "*"
+rustc-serialize = "*"
 url = "1.1.1"
