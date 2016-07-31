@@ -19,7 +19,7 @@ Features
 
 A cralwer downloads pages in breadth first order (using FIFO queue for each domain),
 following all outbound links.
-It writes all visited urls into ``urls.csv`` file (not really a csv),
+It writes all visited urls into ``urls.csv`` file,
 and page contents into ``out.jl`` file (definitely not a ``jl`` at the moment).
 
 

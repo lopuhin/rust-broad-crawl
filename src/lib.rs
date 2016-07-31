@@ -1,5 +1,6 @@
 #![deny(warnings)]
 #[macro_use] extern crate log;
+extern crate csv;
 extern crate html5ever;
 extern crate hyper;
 extern crate mime;

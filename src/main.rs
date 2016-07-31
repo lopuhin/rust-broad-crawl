@@ -1,8 +1,5 @@
 #[macro_use] extern crate log;
 extern crate env_logger;
-extern crate html5ever;
-extern crate hyper;
-extern crate mime;
 extern crate crawler;
 
 use std::env;

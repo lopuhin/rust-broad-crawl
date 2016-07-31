@@ -3,8 +3,9 @@ use std::fs::{File, OpenOptions};
 use std::clone::Clone;
 use std::str;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use csv;
 use hyper::client::Client;
 use hyper::header::{Location};
 use hyper::Url;
@@ -26,13 +27,10 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         .build().expect("Failed to create a Client");
     let (tx, rx) = mpsc::channel();
 
-    // TODO - map
-    let mut urls_file = if let Some(ref urls_path) = settings.urls_path {
-        Some(OpenOptions::new().create(true).append(true).open(urls_path).unwrap())
-    } else { None };
-    let mut out_file = if let Some(ref out_path) = settings.out_path {
-        Some(OpenOptions::new().create(true).append(true).open(out_path).unwrap())
-    } else { None };
+    let mut response_log_writer = settings.urls_path.clone().map(|ref urls_path|
+        ResponseLogWriter::new(urls_path));
+    let mut out_file = settings.out_path.clone().map(|ref out_path|
+        OpenOptions::new().create(true).append(true).open(out_path).unwrap());
 
     let mut stats = CrawlStats::new(Duration::from_secs(10));
 
@@ -52,8 +50,8 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         // We received some response or error, decrement number of pending requests
         request_queue.decr_pending(&request);
         stats.record_response(&response);
-        if let Some(ref mut urls_file) = urls_file {
-            write_response_log(urls_file, &request, &response);
+        if let Some(ref mut response_log_writer) = response_log_writer {
+            response_log_writer.write(&request, &response);
         }
         if let Some(ref response) = response {
             let result = handle_response(&request, &response, &mut request_queue);
@@ -116,13 +114,32 @@ fn redirect_url(response: &Response) -> Option<Url> {
     }
 }
 
-fn write_response_log(urls_file: &mut File, request: &Request, response: &Option<Response>) {
-    let timestamp = 0; // TODO
-    let status = if let &Some(ref response) = response {
-        response.status.to_string()
-    } else {
-        "-".to_string()
-    };
-    // TODO - make it really csv
-    write!(urls_file, "{},{},{}\n", timestamp, status, request.url).unwrap();
+struct ResponseLogWriter {
+    writer: csv::Writer<File>,
+}
+
+impl ResponseLogWriter {
+    fn new(path: &str) -> Self {
+        let file = OpenOptions::new().create(true).append(true).open(path).unwrap();
+        ResponseLogWriter {
+            writer: csv::Writer::from_writer(file),
+        }
+    }
+
+    fn write(&mut self, request: &Request, response: &Option<Response>) {
+        let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(duration) => {
+                let dt = duration.as_secs() as f64 + 1e-9 * duration.subsec_nanos() as f64;
+                format!("{:.6}", dt)
+            },
+            Err(_) => "-".to_owned()
+        };
+        let status = if let &Some(ref response) = response {
+            response.status.to_string()
+        } else {
+            "-".to_string()
+        };
+        self.writer.encode((timestamp, status, request.url.as_str())).unwrap();
+        self.writer.flush().unwrap();
+    }
 }
