@@ -32,8 +32,7 @@ pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
         ResponseLogWriter::new(urls_path));
     let mut out_file = settings.out_path.clone().map(|ref out_path|
         OpenOptions::new().create(true).append(true).open(out_path).unwrap());
-
-    let mut stats = CrawlStats::new(Duration::from_secs(10));
+    let mut stats = CrawlStats::new(Duration::from_secs(20));
 
     let mut request_queue = RequestQueue::new(settings);
     for url in seeds {

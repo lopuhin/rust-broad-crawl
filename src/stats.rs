@@ -46,7 +46,7 @@ impl Stats {
         info!("Read responses:       {}", self.n_read_responses);
         let dt = self.start.elapsed();
         let dt_s: f64 = dt.as_secs() as f64 + 1e-9 * dt.subsec_nanos() as f64;
-        info!("rpm (read responses): {:.0}", self.n_read_responses as f64 / dt_s * 60.);
+        info!("rps (read responses): {:.0}", self.n_read_responses as f64 / dt_s);
     }
 }
 
