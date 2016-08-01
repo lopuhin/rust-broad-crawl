@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use url::Host;
 
 use request::Request;
+use settings::Settings;
 
 
 struct DomainQueue {
@@ -20,12 +21,12 @@ pub struct RequestQueue {
 }
 
 impl RequestQueue {
-    pub fn new(max_per_domain: u32) -> Self {
+    pub fn new(settings: &Settings) -> Self {
         RequestQueue {
             seen_requests: HashSet::new(),
             deques: HashMap::new(),
-            max_pending: 1024,
-            max_per_domain: max_per_domain,
+            max_pending: settings.concurrent_requests,
+            max_per_domain: settings.concurrent_requests_per_domain,
             n_pending: 0,
         }
     }
@@ -110,11 +111,18 @@ impl RequestQueue {
 #[cfg(test)]
 mod tests {
     use request::Request;
+    use settings::Settings;
     use super::*;
+
+    fn request_queue(concurrent_requests_per_domain: u32) -> RequestQueue {
+        let mut settings = Settings::default();
+        settings.concurrent_requests_per_domain = concurrent_requests_per_domain;
+        RequestQueue::new(&settings)
+    }
 
     #[test]
     fn test_push_pop() {
-        let mut queue = RequestQueue::new(2);
+        let mut queue = request_queue(2);
         assert_eq!(queue.is_empty(), true);
         queue.push(Request::from_str("http://domain-1.com/a"));
         assert_eq!(queue.is_empty(), false);
@@ -128,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_pop_empty() {
-        let mut queue = RequestQueue::new(2);
+        let mut queue = request_queue(2);
         queue.push(Request::from_str("http://domain-1.com/a"));
         assert_eq!(queue.is_empty(), false);
         assert_eq!(queue.pop().unwrap().url.as_str(), "http://domain-1.com/a");
@@ -141,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_domain_limit() {
-        let mut queue = RequestQueue::new(2);
+        let mut queue = request_queue(2);
         queue.push(Request::from_str("http://domain-1.com/a"));
         queue.push(Request::from_str("http://domain-1.com/b"));
         queue.push(Request::from_str("http://domain-1.com/c"));
@@ -159,7 +167,7 @@ mod tests {
     #[test]
     fn test_sampling() {
         // Run with $ cargo test test_sampling -- --nocapture
-        let mut queue = RequestQueue::new(3);
+        let mut queue = request_queue(3);
         queue.push(Request::from_str("http://domain-1.com/a"));
         queue.push(Request::from_str("http://domain-1.com/b"));
         queue.push(Request::from_str("http://domain-1.com/c"));
@@ -174,7 +182,7 @@ mod tests {
     #[test]
     fn test_duplicates() {
         // Run with $ cargo test test_sampling -- --nocapture
-        let mut queue = RequestQueue::new(3);
+        let mut queue = request_queue(3);
         queue.push(Request::from_str("http://domain-1.com/a"));
         queue.push(Request::from_str("http://domain-1.com/a"));
         assert!(queue.pop().is_some());

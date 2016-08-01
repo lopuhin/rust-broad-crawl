@@ -1,4 +1,5 @@
 pub struct Settings {
+    pub concurrent_requests: u32,
     pub concurrent_requests_per_domain: u32,
     pub out_path: Option<String>,
     pub timeout: u64,
@@ -9,6 +10,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            concurrent_requests: 128,
             concurrent_requests_per_domain: 4,
             out_path: Some("out.jl".to_string()),
             timeout: 120,
