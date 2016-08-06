@@ -25,7 +25,6 @@ pub fn extract_links(body: &str, base_url: &Url) -> Vec<Url> {
     let mut tokenizer = Tokenizer::new(
         LinkExtractor{links: Vec::new()}, TokenizerOpts::default());
     tokenizer.feed(StrTendril::from(body));
-    tokenizer.run();
     tokenizer.end();
     let link_extractor = tokenizer.unwrap();
     link_extractor.links.iter().filter_map(|href| {
