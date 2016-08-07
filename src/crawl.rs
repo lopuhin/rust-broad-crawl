@@ -23,7 +23,9 @@ use stats::CrawlStats;
 
 pub fn crawl(seeds: Vec<Url>, settings: &Settings) {
     let client = Client::<Handler>::configure()
-        .max_sockets(settings.concurrent_requests as usize)
+        // max_sockets set to larger value to have some capacity in reserve:
+        // we sometimes might be sending a little bit more than concurrent_requests.
+        .max_sockets(2 * settings.concurrent_requests as usize)
         .connect_timeout(Duration::from_secs(settings.timeout))
         .build().expect("Failed to create a Client");
     let (tx, rx) = mpsc::channel();
